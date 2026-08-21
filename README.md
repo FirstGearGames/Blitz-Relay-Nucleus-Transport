@@ -59,4 +59,13 @@ The assembly must stay named `Nucleus.Integrations.BlitzRelay`. The engine grant
 
 **A room needs a real size.** `ServerConfiguration.MaximumConnections` left unset means "no limit" on a transport that listens, and a relay refuses a room without a number, so `RelayTransport.MaximumClients` stands in when nothing else says one.
 
-**Unity.** The transport targets `netstandard2.1`, and the Nucleus Unity integration carries an Inspector component for it behind the `BLITZ_RELAY` define.
+## Layout
+
+| | |
+|---|---|
+| `Nucleus.Integrations.BlitzRelay` | The transport. Plain C#, `netstandard2.1`, no game engine anywhere in it. |
+| `Nucleus.Integrations.BlitzRelay.Unity` | Inspector components for Unity, and nothing else. |
+
+The split is the same one Nucleus itself makes. The transport knows nothing about Unity and is driven entirely in code, exactly as `Synapse` is; the Unity project holds a `MonoBehaviour` that configures it from the Inspector and drives what needs a frame, in the manner of `UnitySystemManager` and its siblings.
+
+Take the Unity folder only if you want the components. Its scripts sit in the same assembly as the Nucleus Unity integration, since `BlitzRelayTransport` derives from that integration's `NetworkTransport` and is added to the CoreManager by its `UnityTransportManager`. Copy or junction the folder into your project beside `Nucleus.Integrations.Unity`, and define `BLITZ_RELAY` so it compiles.

@@ -90,7 +90,12 @@ namespace Nucleus.Integrations.BlitzRelay
             _authorityStandIn = ((RelayTransport)Transport).AuthorityStandIn;
             _isRelayLinkClosed = false;
 
-            _relayLink = RelayLink.CreateClient(relayTransport.ConnectionKey, relayTransport.RoomCode);
+            /* Captured once, because the failure log below can run long after the transport's RoomCode has legitimately moved on:
+             * a coordinator that gave up on this room and was promoted into another would otherwise be reported as failing to
+             * join the room it is hosting. */
+            string joiningRoomCode = relayTransport.RoomCode;
+
+            _relayLink = RelayLink.CreateClient(relayTransport.ConnectionKey, joiningRoomCode);
             _relayLink.DataReceived += OnRelayDataReceived;
             _relayLink.Closed += OnRelayLinkClosed;
 
@@ -99,7 +104,7 @@ namespace Nucleus.Integrations.BlitzRelay
 
             if (!await WaitUntilReadyAsync(relayTransport.RelayHandshakeTimeoutMilliseconds))
             {
-                Logger<RelayClientSocket>.LogError($"The relay at [{relayTransport.RelayEndPoint}] did not admit this peer to room [{relayTransport.RoomCode}] within [{relayTransport.RelayHandshakeTimeoutMilliseconds}]ms.");
+                Logger<RelayClientSocket>.LogError($"The relay at [{relayTransport.RelayEndPoint}] did not admit this peer to room [{joiningRoomCode}] within [{relayTransport.RelayHandshakeTimeoutMilliseconds}]ms, or refused it.");
 
                 return await FailAsync();
             }
@@ -196,7 +201,7 @@ namespace Nucleus.Integrations.BlitzRelay
         }
 
         /// <summary>
-        /// Drives the link until the relay has admitted this peer, or the wait runs out.
+        /// Drives the link until the relay has admitted this peer, refused it, or the wait runs out.
         /// </summary>
         /// <param name="timeoutMilliseconds">How long to wait.</param>
         /// <returns><see langword="true"/> when the relay admitted it.</returns>
@@ -210,6 +215,12 @@ namespace Nucleus.Integrations.BlitzRelay
 
                 if (_relayLink is not null && _relayLink.IsReady)
                     return true;
+
+                /* The relay saying no is an answer, not a slow yes: a refusal closes the link, and a join asked of a room that
+                 * died with its host is refused in one round trip. Waiting out the handshake window anyway held a returning
+                 * peer's whole bootstrap for it. The flag is left standing for the receive pass, which is its consumer. */
+                if (_isRelayLinkClosed)
+                    return false;
 
                 await Task.Delay(PollIntervalMilliseconds);
             }
