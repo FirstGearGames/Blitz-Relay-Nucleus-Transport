@@ -51,6 +51,15 @@ namespace Nucleus.Integrations.BlitzRelay
         private bool _isRelayLinkClosed;
 
         /// <summary>
+        /// How the most recent attempt to join a room ended.
+        /// </summary>
+        /// <remarks>
+        /// Read by <see cref="RelaySessionHost"/>, whose caller has to tell a room that is not there from a relay this peer
+        /// could not reach: only the first of those is something a directory should be told.
+        /// </remarks>
+        internal RelayLinkOutcome LastLinkOutcome { get; private set; } = RelayLinkOutcome.Unavailable;
+
+        /// <summary>
         /// Creates a new instance.
         /// </summary>
         public RelayClientSocket() { }
@@ -80,20 +89,30 @@ namespace Nucleus.Integrations.BlitzRelay
         {
             RelayTransport relayTransport = (RelayTransport)Transport;
 
-            if (string.IsNullOrEmpty(relayTransport.RoomCode))
+            /* The room this peer was told to join, read as such rather than through RoomCode, which answers with the room this
+             * peer hosts whenever it has one. A peer that has hosted and is then told to join somebody else would otherwise dial
+             * its own room. Captured once as well, because the failure log below can run long after the transport has
+             * legitimately moved on: a coordinator that gave up on this room and was promoted into another would be reported as
+             * failing to join the room it is hosting. */
+            string joiningRoomCode = relayTransport.JoiningRoomCode;
+
+            if (string.IsNullOrEmpty(joiningRoomCode))
             {
+                LastLinkOutcome = RelayLinkOutcome.Unavailable;
+
                 Logger<RelayClientSocket>.LogError($"No room to join. Set [{nameof(RelayTransport)}.{nameof(RelayTransport.RoomCode)}] to the room the authority is hosting before connecting.");
 
                 return ConnectionStateChangeResult.UnspecifiedError;
             }
 
-            _authorityStandIn = ((RelayTransport)Transport).AuthorityStandIn;
-            _isRelayLinkClosed = false;
+            /* Any previous link is released before another is taken. The relay closing a link only records that it has gone, the
+             * engine being told on the following receive pass, so a rejoin would otherwise build a second link over a live one
+             * and leave the first subscribed and holding its socket for as long as this peer runs. */
+            ReleaseRelayLink();
 
-            /* Captured once, because the failure log below can run long after the transport's RoomCode has legitimately moved on:
-             * a coordinator that gave up on this room and was promoted into another would otherwise be reported as failing to
-             * join the room it is hosting. */
-            string joiningRoomCode = relayTransport.RoomCode;
+            _authorityStandIn = relayTransport.AuthorityStandIn;
+            _isRelayLinkClosed = false;
+            LastLinkOutcome = RelayLinkOutcome.Unavailable;
 
             _relayLink = RelayLink.CreateClient(relayTransport.ConnectionKey, joiningRoomCode);
             _relayLink.DataReceived += OnRelayDataReceived;
@@ -108,6 +127,8 @@ namespace Nucleus.Integrations.BlitzRelay
 
                 return await FailAsync();
             }
+
+            LastLinkOutcome = RelayLinkOutcome.Connected;
 
             foreach (LocalConnectionState localConnectionState in IterateLocalStateToConnectedOrDisconnected(Invoker.Client, LocalConnectionState.Connected))
             {
@@ -124,11 +145,7 @@ namespace Nucleus.Integrations.BlitzRelay
             if (_relayLink is null)
                 return Task.FromResult(ConnectionStateChangeResult.AlreadyInState);
 
-            _relayLink.DataReceived -= OnRelayDataReceived;
-            _relayLink.Closed -= OnRelayLinkClosed;
-
-            _relayLink.Dispose();
-            _relayLink = null;
+            ReleaseRelayLink();
 
             foreach (LocalConnectionState localConnectionState in IterateLocalStateToConnectedOrDisconnected(Invoker.Client, LocalConnectionState.Disconnected))
             {
@@ -192,12 +209,30 @@ namespace Nucleus.Integrations.BlitzRelay
         /// <returns>An unspecified failure, for the caller to return.</returns>
         private async Task<ConnectionStateChangeResult> FailAsync()
         {
-            _relayLink?.Dispose();
-            _relayLink = null;
+            ReleaseRelayLink();
 
             TransportManager.ChangeLocalConnectionState(Invoker.Client, LocalConnectionState.Disconnected, Connection);
 
             return await Task.FromResult(ConnectionStateChangeResult.UnspecifiedError);
+        }
+
+        /// <summary>
+        /// Unsubscribes from this peer's link to the relay and disposes it, leaving nothing to be reached from it.
+        /// </summary>
+        /// <remarks>
+        /// Unsubscribing before disposing matters as much as the disposal does: a link left subscribed can still report itself
+        /// closed onto a socket that has moved on to another one.
+        /// </remarks>
+        private void ReleaseRelayLink()
+        {
+            if (_relayLink is null)
+                return;
+
+            _relayLink.DataReceived -= OnRelayDataReceived;
+            _relayLink.Closed -= OnRelayLinkClosed;
+
+            _relayLink.Dispose();
+            _relayLink = null;
         }
 
         /// <summary>
@@ -220,7 +255,11 @@ namespace Nucleus.Integrations.BlitzRelay
                  * died with its host is refused in one round trip. Waiting out the handshake window anyway held a returning
                  * peer's whole bootstrap for it. The flag is left standing for the receive pass, which is its consumer. */
                 if (_isRelayLinkClosed)
+                {
+                    LastLinkOutcome = RelayLinkOutcome.Refused;
+
                     return false;
+                }
 
                 await Task.Delay(PollIntervalMilliseconds);
             }

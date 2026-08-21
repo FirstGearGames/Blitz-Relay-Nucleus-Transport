@@ -23,10 +23,12 @@ await transport.ConnectAsync(Invoker.Client);
 
 A relayed room belongs to the peer that made it and dies with that peer, taking every other peer's link with it. So a handover is not a reconnection: it is a new room, with a name nobody could have known in advance, and no channel left between the survivors to tell them what it is.
 
-`RelayHostMigration` answers that by registering the session with a [newfarm](https://github.com/FirstGearGames/Newfarm) directory. It notices the room dying, and either takes the session over (adopting the world the peer kept, opening a fresh room, publishing where it is) or waits to be told where the session went.
+None of that is the relay's problem to solve, and none of it is solved here. It is solved by a [newfarm](https://github.com/FirstGearGames/Newfarm) directory and by `Nucleus.Integrations.Newfarm.NewfarmHostMigration`, which holds the session, notices the host going, and either takes the session over (adopting the world the peer kept, standing the session up again, publishing where it now is) or waits to be told where the session went. Every word of that is the same whether a session is carried by a relay, an allocation service, or a host and port.
+
+What this repository contributes is `RelaySessionHost`, the `ISessionHost` the coordinator drives: it opens a room, names it, joins somebody else's, and leaves. Its adapter tag is `"blitzrelay"`, which is how a peer receiving a credential knows it is a room code rather than some other service's idea of an address.
 
 ```csharp
-RelayHostMigration migration = new(core, transport, directoryEndPoint);
+NewfarmHostMigration migration = new(core, new RelaySessionHost(transport), directoryEndPoint);
 
 core.ClientManager.DisconnectResetMode = DisconnectResetMode.RetainReceivedWorld;   // keep the world when the link drops
 
@@ -49,15 +51,19 @@ Checked out beside this repository:
 | [Nucleus](https://github.com/FirstGearGames/Nucleus) | the engine this is a transport for |
 | SynapseSocket | carries this peer's datagrams to the relay |
 | `BlitzRelay.Protocol` | the relay's message framing |
-| [Newfarm](https://github.com/FirstGearGames/Newfarm) | `Newfarm.Client` only, and only for `RelayHostMigration`; the transport itself does not use it |
+| `Nucleus.Integrations.Newfarm` | in the Nucleus repository, and only for `RelaySessionHost`; the transport itself does not use it |
 
-The assembly must stay named `Nucleus.Integrations.BlitzRelay`. The engine grants it access to `CommonSocket`, whose connect, send and receive members are internal, and that grant is matched on assembly name.
+Newfarm itself is not referenced from here at all. Nothing in this assembly talks to a directory, and nothing in it knows what a session identity or an epoch is; that arrives behind `Nucleus.Integrations.Newfarm`, which is where [newfarm](https://github.com/FirstGearGames/Newfarm) is a dependency.
+
+The assembly must stay named `Nucleus.Integrations.BlitzRelay`. The engine grants it access to `CommonSocket`, whose connect, send and receive members are internal, and that grant is matched on assembly name. The coordinator needs no such grant: it drives an ordinary `Transport` through `ISessionHost` and touches nothing internal.
 
 ## Notes
 
 **It allocates nothing per message.** Every outbound message is framed into one buffer the link owns, and every inbound one is copied into an array rented from the shared pool, because the engine returns that array to that pool once it has read it. Measured at 0.00 bytes a message, both ways through the relay.
 
 **A room needs a real size.** `ServerConfiguration.MaximumConnections` left unset means "no limit" on a transport that listens, and a relay refuses a room without a number, so `RelayTransport.MaximumClients` stands in when nothing else says one.
+
+**`RoomCode` answers two questions, `HostedRoomCode` answers one.** `RoomCode` is the room this peer hosts if it has one and otherwise the room it was told to join, which is the convenient reading for a game driving the transport directly. `HostedRoomCode` is strictly this peer's own and empty when its hosting side is down, which is the only honest answer to "what should be published to a directory" and to "prove you are still hosting".
 
 ## Layout
 

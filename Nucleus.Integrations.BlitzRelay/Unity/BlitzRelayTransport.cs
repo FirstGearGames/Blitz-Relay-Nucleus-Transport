@@ -4,8 +4,8 @@
 #if UNITY_ENGINE && BLITZ_RELAY
 using System.Net;
 using System.Threading.Tasks;
-using Newfarm.Client;
 using Nucleus.Integrations.BlitzRelay;
+using Nucleus.Integrations.Newfarm;
 using Nucleus.Managers.Client;
 using Nucleus.Managers.Core;
 using Nucleus.Transports;
@@ -27,7 +27,7 @@ namespace Nucleus.Integrations.Unity.Transports
     /// pass that around: the session registers with a directory, and a peer joins by <see cref="SessionId"/> alone, which keeps
     /// working after a handover when the room code no longer does.
     /// </remarks>
-    /// <seealso cref="RelayHostMigration"/>
+    /// <seealso cref="NewfarmHostMigration"/>
     [DisallowMultipleComponent]
     public class BlitzRelayTransport : NetworkTransport
     {
@@ -108,8 +108,10 @@ namespace Nucleus.Integrations.Unity.Transports
         /// <remarks>
         /// Polled from this component's <c>Update</c>, so a game needs only to start hosting or to join through it. Everything
         /// else, being elected, adopting the world and finding where the session moved to, follows from that.
+        /// Nothing about it is a relay. It drives a directory, and this transport reaches it through a
+        /// <see cref="RelaySessionHost"/>, which is the only piece of a handover that knows what a room is.
         /// </remarks>
-        public RelayHostMigration Migration { get; private set; }
+        public NewfarmHostMigration Migration { get; private set; }
 
         /// <summary>
         /// Names the session with the directory, which is what a host hands to its clients and the only thing a peer needs to
@@ -146,7 +148,7 @@ namespace Nucleus.Integrations.Unity.Transports
                  * migration means to carry the world across exactly that moment, so opting in sets the mode here. */
                 coreManager.ClientManager.DisconnectResetMode = DisconnectResetMode.RetainReceivedWorld;
 
-                Migration = new RelayHostMigration(coreManager, _relayTransport, new IPEndPoint(IPAddress.Parse(_directoryAddress), _directoryPort));
+                Migration = new NewfarmHostMigration(coreManager, new RelaySessionHost(_relayTransport), new IPEndPoint(IPAddress.Parse(_directoryAddress), _directoryPort));
             }
 
             return _relayTransport;
@@ -184,6 +186,25 @@ namespace Nucleus.Integrations.Unity.Transports
             }
 
             return await Migration.JoinAsync(sessionId);
+        }
+
+        /// <summary>
+        /// Gives the session up to whoever the directory elects next, without leaving it and without stopping play.
+        /// </summary>
+        /// <returns><see langword="true"/> when this peer was hosting and has now given the session up.</returns>
+        /// <remarks>
+        /// The handover a game asks for on purpose: a host handing over from a menu or a hotkey rather than by quitting. This
+        /// peer stops serving, the directory elects a successor at once instead of waiting out a heartbeat, and this peer rejoins
+        /// as an ordinary client when the successor publishes where the session went.
+        /// </remarks>
+        public bool SurrenderHostingSession()
+        {
+            if (Migration is not null)
+                return Migration.SurrenderHosting();
+
+            Debug.LogError($"[{nameof(BlitzRelayTransport)}] Host migration is off, so there is no session to hand on. Stop the server through the CoreManager instead.");
+
+            return false;
         }
 
         /// <summary>

@@ -103,6 +103,11 @@ namespace Nucleus.Integrations.BlitzRelay
         {
             RelayTransport relayTransport = (RelayTransport)Transport;
 
+            /* Any previous link is released before another is taken. A peer stands a room up more than once over a session: it
+             * declines an election and is elected again, or gives the session up and is later handed it back. Building a second
+             * link over a live one would leave the first subscribed and holding its socket for as long as this peer runs. */
+            ReleaseRelayLink();
+
             _relayLink = RelayLink.CreateHost(relayTransport.ConnectionKey, relayTransport.RoomSize);
             _relayLink.ClientJoined += OnRelayClientJoined;
             _relayLink.ClientLeft += OnRelayClientLeft;
@@ -133,17 +138,12 @@ namespace Nucleus.Integrations.BlitzRelay
             if (_relayLink is null)
                 return Task.FromResult(ConnectionStateChangeResult.AlreadyInState);
 
-            _relayLink.ClientJoined -= OnRelayClientJoined;
-            _relayLink.ClientLeft -= OnRelayClientLeft;
-            _relayLink.DataReceived -= OnRelayDataReceived;
-
             /* Every client is dropped before the link goes. The relay tears an ephemeral room down with its host and tells them
              * itself, but the engine side of each one has to be unwound here: a Connection left registered stays an observer of
              * every started system, and its id and Connection are lost to their pools. */
             DisconnectRemoteClients();
 
-            _relayLink.Dispose();
-            _relayLink = null;
+            ReleaseRelayLink();
 
             foreach (LocalConnectionState localConnectionState in IterateLocalStateToConnectedOrDisconnected(Invoker.Server, LocalConnectionState.Disconnected))
             {
@@ -235,12 +235,31 @@ namespace Nucleus.Integrations.BlitzRelay
         /// <returns>An unspecified failure, for the caller to return.</returns>
         private async Task<ConnectionStateChangeResult> FailAsync()
         {
-            _relayLink?.Dispose();
-            _relayLink = null;
+            ReleaseRelayLink();
 
             TransportManager.ChangeLocalConnectionState(Invoker.Server, LocalConnectionState.Disconnected, Connection);
 
             return await Task.FromResult(ConnectionStateChangeResult.UnspecifiedError);
+        }
+
+        /// <summary>
+        /// Unsubscribes from this peer's link to the relay and disposes it, leaving nothing to be reached from it.
+        /// </summary>
+        /// <remarks>
+        /// Unsubscribing before disposing matters as much as the disposal does: a link left subscribed can still report a client
+        /// arriving or leaving onto a socket that has moved on to another room.
+        /// </remarks>
+        private void ReleaseRelayLink()
+        {
+            if (_relayLink is null)
+                return;
+
+            _relayLink.ClientJoined -= OnRelayClientJoined;
+            _relayLink.ClientLeft -= OnRelayClientLeft;
+            _relayLink.DataReceived -= OnRelayDataReceived;
+
+            _relayLink.Dispose();
+            _relayLink = null;
         }
 
         /// <summary>

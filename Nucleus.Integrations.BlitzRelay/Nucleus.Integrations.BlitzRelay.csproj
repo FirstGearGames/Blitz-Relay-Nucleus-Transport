@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
     <PropertyGroup>
         <OutputType>Library</OutputType>
@@ -25,11 +25,15 @@
         <ProjectReference Include="..\..\SynapseSocket\SynapseSocket\SynapseSocket.csproj"/>
     </ItemGroup>
 
-    <!-- Both live in repositories checked out beside this one. Only this integration references them: neither the engine nor
-         anything else in it knows that Blitz Relay or newfarm exist. -->
+    <!-- The relay's own message framing. Only this integration references it: the engine does not know Blitz Relay exists. -->
     <ItemGroup>
         <ProjectReference Include="..\..\Other Projects\Blitz Relay With SynapseSocket\src\BlitzRelay.Protocol\BlitzRelay.Protocol.csproj"/>
-        <ProjectReference Include="..\..\Newfarm\Newfarm.Client\Newfarm.Client.csproj"/>
+    </ItemGroup>
+
+    <!-- The migration coordinator this hands an ISessionHost to. Newfarm arrives through that project rather than directly:
+         nothing in this assembly talks to a directory, and nothing in it knows what a session identity or an epoch is. -->
+    <ItemGroup>
+        <ProjectReference Include="..\..\Nucleus\Nucleus.Integrations.Newfarm\Nucleus.Integrations.Newfarm.csproj"/>
     </ItemGroup>
 
 </Project>

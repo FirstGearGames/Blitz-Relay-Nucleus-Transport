@@ -14,7 +14,7 @@ namespace Nucleus.Integrations.BlitzRelay
     /// <see cref="RoomCode"/>: the authority connects, the relay names a room, and every other peer needs that name and nothing
     /// else.
     /// The room belongs to the peer that made it and dies with that peer, so the code changes at every handover. That is what
-    /// <see cref="RelayHostMigration"/> is for.
+    /// <see cref="RelaySessionHost"/> and a newfarm directory are for.
     /// </remarks>
     public class RelayTransport : SocketPairTransport<RelayServerSocket, RelayClientSocket>
     {
@@ -41,6 +41,33 @@ namespace Nucleus.Integrations.BlitzRelay
             get => ServerSocket is not null && ServerSocket.RoomCode.Length > 0 ? ServerSocket.RoomCode : _roomCode;
             set => _roomCode = value;
         }
+
+        /// <summary>
+        /// The room this peer is itself hosting, or an empty string when its own hosting side is not up.
+        /// </summary>
+        /// <remarks>
+        /// Strictly this peer's own, unlike <see cref="RoomCode"/>, which answers with the room this peer was told to join when
+        /// it is not hosting one. Publishing a room to a directory, and proving to one that this peer is still hosting, are both
+        /// questions only this can answer: a room this peer merely joined would send every other peer to a host that is not
+        /// there, and would stand in as proof of hosting that this peer cannot give.
+        /// </remarks>
+        public string HostedRoomCode => ServerSocket is not null ? ServerSocket.RoomCode : string.Empty;
+
+        /// <summary>
+        /// The room a joining peer was told to join, which is what <see cref="RoomCode"/>'s setter writes and nothing else does.
+        /// </summary>
+        /// <remarks>
+        /// Read by <see cref="RelayClientSocket"/> in place of <see cref="RoomCode"/>, because that property answers with the room
+        /// this peer hosts whenever it has one: a peer that has hosted and is then told to join somebody else would otherwise
+        /// dial its own room and be told it is already in it.
+        /// </remarks>
+        internal string JoiningRoomCode => _roomCode;
+
+        /// <summary>
+        /// How this peer's most recent attempt to join a room ended, which is <see cref="RelayLinkOutcome.Unavailable"/> before
+        /// it has tried one.
+        /// </summary>
+        internal RelayLinkOutcome LastJoinOutcome => ClientSocket is not null ? ClientSocket.LastLinkOutcome : RelayLinkOutcome.Unavailable;
 
         /// <summary>
         /// How long to wait for the relay to answer a handshake before giving up on it.
