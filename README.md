@@ -49,7 +49,7 @@ Checked out beside this repository:
 | [Nucleus](https://github.com/FirstGearGames/Nucleus) | the engine this is a transport for |
 | SynapseSocket | carries this peer's datagrams to the relay |
 | `BlitzRelay.Protocol` | the relay's message framing |
-| [Newfarm](https://github.com/FirstGearGames/Newfarm) | only for `RelayHostMigration`; the transport itself does not use it |
+| [Newfarm](https://github.com/FirstGearGames/Newfarm) | `Newfarm.Client` only, and only for `RelayHostMigration`; the transport itself does not use it |
 
 The assembly must stay named `Nucleus.Integrations.BlitzRelay`. The engine grants it access to `CommonSocket`, whose connect, send and receive members are internal, and that grant is matched on assembly name.
 
@@ -64,8 +64,8 @@ The assembly must stay named `Nucleus.Integrations.BlitzRelay`. The engine grant
 | | |
 |---|---|
 | `Nucleus.Integrations.BlitzRelay` | The transport. Plain C#, `netstandard2.1`, no game engine anywhere in it. |
-| `Nucleus.Integrations.BlitzRelay.Unity` | Inspector components for Unity, and nothing else. |
+| `Nucleus.Integrations.BlitzRelay/Unity` | Inspector components for Unity, and nothing else. Excluded from the build above. |
 
-The split is the same one Nucleus itself makes. The transport knows nothing about Unity and is driven entirely in code, exactly as `Synapse` is; the Unity project holds a `MonoBehaviour` that configures it from the Inspector and drives what needs a frame, in the manner of `UnitySystemManager` and its siblings.
+The split is the same one Nucleus itself makes. The transport knows nothing about Unity and is driven entirely in code, exactly as `Synapse` is; the `Unity` folder adds a `MonoBehaviour` that configures it from the Inspector and drives what needs a frame, in the manner of `UnitySystemManager` and its siblings. The transport project removes `Unity\**` from its compile items, so the engine-agnostic assembly cannot pick it up by accident.
 
-Take the Unity folder only if you want the components. Its scripts sit in the same assembly as the Nucleus Unity integration, since `BlitzRelayTransport` derives from that integration's `NetworkTransport` and is added to the CoreManager by its `UnityTransportManager`. Copy or junction the folder into your project beside `Nucleus.Integrations.Unity`, and define `BLITZ_RELAY` so it compiles.
+Take the `Unity` folder only if you want the components. Its scripts belong in the same assembly as the Nucleus Unity integration, because `BlitzRelayTransport` derives from that integration's `NetworkTransport` and is added to the CoreManager by its `UnityTransportManager`. Copy or junction it into your project beside `Nucleus.Integrations.Unity`, and define `BLITZ_RELAY` so it compiles.

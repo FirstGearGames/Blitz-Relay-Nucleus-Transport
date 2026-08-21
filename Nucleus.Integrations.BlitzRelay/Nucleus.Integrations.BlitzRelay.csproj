@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
 
     <PropertyGroup>
         <OutputType>Library</OutputType>
@@ -7,20 +7,29 @@
         <ImplicitUsings>disable</ImplicitUsings>
         <Nullable>enable</Nullable>
         <RootNamespace>Nucleus.Integrations.BlitzRelay</RootNamespace>
-        <!-- The engine grants this assembly access to CommonSocket by name, so renaming it breaks the build. -->
         <AssemblyName>Nucleus.Integrations.BlitzRelay</AssemblyName>
     </PropertyGroup>
 
     <!--
-        Every reference is to a repository checked out beside this one, which is how the rest of this stack is laid out.
-        SynapseSocket is aliased for the same reason the engine aliases it: both it and Nucleus compile the same CodeBoost
-        sources, so those types exist in each and every use of one is ambiguous without this.
+        The Unity folder is for Unity and nothing else: it names UnityEngine and UnityEditor, and this assembly must stay free of
+        any game engine. Removing it here makes that the compiler's to enforce rather than a reviewer's to remember.
     -->
     <ItemGroup>
+        <Compile Remove="Unity\**\*.cs"/>
+        <None Include="Unity\**\*"/>
+    </ItemGroup>
+
+    <!-- Every reference is to a repository checked out beside this one, which is how the rest of this stack is laid out. -->
+    <ItemGroup>
         <ProjectReference Include="..\..\Nucleus\Nucleus\Nucleus.csproj"/>
-        <ProjectReference Include="..\..\SynapseSocket\SynapseSocket\SynapseSocket.csproj" Aliases="synapse"/>
+        <ProjectReference Include="..\..\SynapseSocket\SynapseSocket\SynapseSocket.csproj"/>
+    </ItemGroup>
+
+    <!-- Both live in repositories checked out beside this one. Only this integration references them: neither the engine nor
+         anything else in it knows that Blitz Relay or newfarm exist. -->
+    <ItemGroup>
         <ProjectReference Include="..\..\Other Projects\Blitz Relay With SynapseSocket\src\BlitzRelay.Protocol\BlitzRelay.Protocol.csproj"/>
-        <ProjectReference Include="..\..\Newfarm\Newfarm\Newfarm.csproj"/>
+        <ProjectReference Include="..\..\Newfarm\Newfarm.Client\Newfarm.Client.csproj"/>
     </ItemGroup>
 
 </Project>
