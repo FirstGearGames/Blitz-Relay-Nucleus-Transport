@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <OutputType>Library</OutputType>
+        <TargetFramework>netstandard2.1</TargetFramework>
+        <LangVersion>9</LangVersion>
+        <ImplicitUsings>disable</ImplicitUsings>
+        <Nullable>enable</Nullable>
+        <RootNamespace>Nucleus.Integrations.BlitzRelay</RootNamespace>
+        <!-- The engine grants this assembly access to CommonSocket by name, so renaming it breaks the build. -->
+        <AssemblyName>Nucleus.Integrations.BlitzRelay</AssemblyName>
+    </PropertyGroup>
+
+    <!--
+        Every reference is to a repository checked out beside this one, which is how the rest of this stack is laid out.
+        SynapseSocket is aliased for the same reason the engine aliases it: both it and Nucleus compile the same CodeBoost
+        sources, so those types exist in each and every use of one is ambiguous without this.
+    -->
+    <ItemGroup>
+        <ProjectReference Include="..\..\Nucleus\Nucleus\Nucleus.csproj"/>
+        <ProjectReference Include="..\..\SynapseSocket\SynapseSocket\SynapseSocket.csproj" Aliases="synapse"/>
+        <ProjectReference Include="..\..\Other Projects\Blitz Relay With SynapseSocket\src\BlitzRelay.Protocol\BlitzRelay.Protocol.csproj"/>
+        <ProjectReference Include="..\..\Newfarm\Newfarm\Newfarm.csproj"/>
+    </ItemGroup>
+
+</Project>
