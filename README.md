@@ -1,6 +1,6 @@
 # Blitz Relay Nucleus Transport
 
-A Nucleus transport for Blitz Relay.
+A Nucleus transport for Blitz Relay, with a provided Unity integration.
 
 Nothing here listens, and there is no address to dial. Both sides of a session are ordinary clients of the relay, one of them holding the host role in a room, which is what lets peers reach each other when none of them is reachable and no port has been forwarded. What replaces an address is the **room code**: the peer that starts the server is given one by the relay, and every other peer needs that and nothing else.
 
