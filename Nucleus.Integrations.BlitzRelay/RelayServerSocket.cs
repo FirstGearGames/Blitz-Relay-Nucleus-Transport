@@ -38,7 +38,7 @@ namespace Nucleus.Integrations.BlitzRelay
         /// Assigns the per-socket ids remote clients are known by.
         /// </summary>
         /// <remarks>Swept once a frame by the TransportManager through <see cref="SweepIdPools"/>, so it runs no timer of its own.</remarks>
-        private readonly DelayedUIntPool _idBySocketPool = new(usesOwnTimer: false);
+        private readonly DelayedUIntPool _idBySocketPool = new(isOwnTimerEnabled: false);
 
         /// <summary>
         /// Maps the id the relay addresses a client by onto the Connection the engine knows it as.
@@ -66,6 +66,11 @@ namespace Nucleus.Integrations.BlitzRelay
         /// This peer's link to the relay, or <see langword="null"/> before it connects.
         /// </summary>
         private RelayLink? _relayLink;
+
+        /// <summary>
+        /// True when the relay has closed this peer's link and the engine has yet to be told.
+        /// </summary>
+        private bool _isRelayLinkClosed;
 
         /// <summary>
         /// Creates a new instance.
@@ -108,10 +113,13 @@ namespace Nucleus.Integrations.BlitzRelay
              * link over a live one would leave the first subscribed and holding its socket for as long as this peer runs. */
             ReleaseRelayLink();
 
+            _isRelayLinkClosed = false;
+
             _relayLink = RelayLink.CreateHost(relayTransport.ConnectionKey, relayTransport.RoomSize);
             _relayLink.ClientJoined += OnRelayClientJoined;
             _relayLink.ClientLeft += OnRelayClientLeft;
             _relayLink.DataReceived += OnRelayDataReceived;
+            _relayLink.Closed += OnRelayLinkClosed;
 
             if (!_relayLink.TryConnect(relayTransport.RelayEndPoint, relayTransport.Configuration.MaximumTransmissionUnit))
                 return await FailAsync();
@@ -209,6 +217,17 @@ namespace Nucleus.Integrations.BlitzRelay
                     TransportManager.SetRemoteConnectionStateAsDisconnected(pendingClientEvent.Connection);
             }
 
+            /* Applied here, on the loop thread, so the state change and its callbacks never run inside a receive callback, and after
+             * the client events, so a client admitted in the same poll is registered before it is dropped. The ordinary stop does
+             * the rest: it drops every client, releases the dead link, and walks the local state down. It completes before it
+             * returns, so there is nothing to await. */
+            if (_isRelayLinkClosed)
+            {
+                _isRelayLinkClosed = false;
+
+                _ = DisconnectAsync();
+            }
+
             while (_pendingPackets.TryDequeue(out IncomingPacket incomingPacket))
                 receivedPackets.Add(incomingPacket);
         }
@@ -225,6 +244,8 @@ namespace Nucleus.Integrations.BlitzRelay
 
             _pendingPackets.Clear();
             _pendingClientEvents.Clear();
+
+            _isRelayLinkClosed = false;
 
             base.OnReturn();
         }
@@ -257,6 +278,7 @@ namespace Nucleus.Integrations.BlitzRelay
             _relayLink.ClientJoined -= OnRelayClientJoined;
             _relayLink.ClientLeft -= OnRelayClientLeft;
             _relayLink.DataReceived -= OnRelayDataReceived;
+            _relayLink.Closed -= OnRelayLinkClosed;
 
             _relayLink.Dispose();
             _relayLink = null;
@@ -375,6 +397,11 @@ namespace Nucleus.Integrations.BlitzRelay
 
             _pendingPackets.Enqueue(new IncomingPacket(payload, channel, senderConnection));
         }
+
+        /// <summary>
+        /// Records that the relay has closed this peer's link, which takes the room and every client in it down with it.
+        /// </summary>
+        private void OnRelayLinkClosed() => _isRelayLinkClosed = true;
 
         /// <summary>
         /// Registers a joined client with the engine.

@@ -360,11 +360,18 @@ namespace Nucleus.Integrations.BlitzRelay
         }
 
         /// <summary>
-        /// Reports the link as gone.
+        /// Reports the link as gone when the connection that closed is the link's own.
         /// </summary>
-        /// <param name="connectionEventArgs">The closed link.</param>
+        /// <param name="connectionEventArgs">The closed connection.</param>
         private void OnRelayConnectionClosed(ConnectionEventArgs connectionEventArgs)
         {
+            // Compared by reference because the socket also reports a stranger's connection closing, and that is not this link.
+            if (!ReferenceEquals(connectionEventArgs.Connection, _relayConnection))
+                return;
+
+            /* Dropped so a send after the close finds no link and reports failure quietly. A closed connection is dead for good,
+             * and the socket rejects a send on one. */
+            _relayConnection = null;
             IsReady = false;
 
             Closed?.Invoke();
