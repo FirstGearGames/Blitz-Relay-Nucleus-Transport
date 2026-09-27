@@ -19,6 +19,11 @@
         <None Include="Unity\**\*"/>
     </ItemGroup>
 
+    <!-- The link is internal, and its tests drive it directly over loopback. -->
+    <ItemGroup>
+        <InternalsVisibleTo Include="Nucleus.Integrations.BlitzRelay.Tests"/>
+    </ItemGroup>
+
     <!-- Every reference is to a repository checked out beside this one, which is how the rest of this stack is laid out. -->
     <ItemGroup>
         <ProjectReference Include="..\..\Nucleus\Nucleus\Nucleus.csproj"/>

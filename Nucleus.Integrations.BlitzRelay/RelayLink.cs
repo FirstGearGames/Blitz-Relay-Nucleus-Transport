@@ -92,8 +92,14 @@ namespace Nucleus.Integrations.BlitzRelay
         private SynapseManager? _synapseManager;
 
         /// <summary>
-        /// The link to the relay, or <see langword="null"/> before it is established.
+        /// The connection <see cref="SynapseManager.Connect"/> returned for the relay, or <see langword="null"/> before connecting and
+        /// from the moment the link closes or its connection is released, after which the socket may hand the same object to another
+        /// connection.
         /// </summary>
+        /// <remarks>
+        /// The only connection ever treated as the link. Every other connection the socket reports is a stranger's, whose
+        /// establishment is refused and whose messages are not read.
+        /// </remarks>
         private SynapseConnection? _relayConnection;
 
         /// <summary>
@@ -176,6 +182,11 @@ namespace Nucleus.Integrations.BlitzRelay
                 // The receive engine otherwise hands out a slice of its own reusable buffer, which is gone by the time the
                 // engine's loop reads it.
                 CopyReceivedPayloads = true,
+
+                /* The link talks to the relay and to nobody else, so its socket is OS-connected to it, as the Synapse client socket's
+                 * is for the same reason. A datagram from any other endpoint is then dropped before the engine sees it, which is what
+                 * stops a stranger that finds this port from handshaking in at all. */
+                ConnectedSocketEnabled = true,
             };
 
             /* Room for the largest datagram the socket will build, plus the relay framing that goes around a payload of that
@@ -185,6 +196,7 @@ namespace Nucleus.Integrations.BlitzRelay
             _synapseManager = new SynapseManager(synapseConfig);
             _synapseManager.ConnectionEstablished += OnRelayConnectionEstablished;
             _synapseManager.ConnectionClosed += OnRelayConnectionClosed;
+            _synapseManager.ConnectionReleased += OnRelayConnectionReleased;
             _synapseManager.PacketReceived += OnRelayPacketReceived;
 
             try
@@ -257,25 +269,38 @@ namespace Nucleus.Integrations.BlitzRelay
 
             _synapseManager.ConnectionEstablished -= OnRelayConnectionEstablished;
             _synapseManager.ConnectionClosed -= OnRelayConnectionClosed;
+            _synapseManager.ConnectionReleased -= OnRelayConnectionReleased;
             _synapseManager.PacketReceived -= OnRelayPacketReceived;
 
-            if (_relayConnection is not null)
-            {
-                _synapseManager.Disconnect(_relayConnection);
+            /* Dropped before the goodbye rather than after the engine goes. The poll below releases the connection with the
+             * release handler already unsubscribed, and nothing may hold one past its release; dropping it first also means a
+             * goodbye that throws cannot leave it behind. */
+            SynapseConnection? relayConnection = _relayConnection;
+            _relayConnection = null;
 
-                /* Driven so the goodbye actually leaves before the socket does. Without it the relay hears nothing and takes its
-                 * own timeout to miss this peer, which for a host means every client sits in a room with a dead host at the top
-                 * of it for as long as that takes. */
-                _synapseManager.Poll();
+            IsReady = false;
+
+            if (relayConnection is not null)
+            {
+                try
+                {
+                    _synapseManager.Disconnect(relayConnection);
+
+                    /* Driven so the goodbye actually leaves before the socket does. Without it the relay hears nothing and takes
+                     * its own timeout to miss this peer, which for a host means every client sits in a room with a dead host at
+                     * the top of it for as long as that takes. */
+                    _synapseManager.Poll();
+                }
+                catch (Exception exception)
+                {
+                    Logger<RelayLink>.LogError($"The goodbye to the relay failed: {exception}");
+                }
             }
 
             _synapseManager.Stop();
             _synapseManager.Dispose();
 
             _synapseManager = null;
-            _relayConnection = null;
-
-            IsReady = false;
         }
 
         /// <summary>
@@ -334,16 +359,32 @@ namespace Nucleus.Integrations.BlitzRelay
         }
 
         /// <summary>
-        /// Authenticates, then asks for the role this peer wants.
+        /// Authenticates, then asks for the role this peer wants, once the link's own connection is established. Any other
+        /// connection is a stranger's and is disconnected.
         /// </summary>
-        /// <param name="connectionEventArgs">The established link.</param>
+        /// <param name="connectionEventArgs">The established connection.</param>
+        /// <remarks>
+        /// The link used to adopt whichever connection established first, so a stranger that handshook into this socket before the
+        /// relay answered became the link, was sent the connection key, and had its messages read as the relay's. Compared by
+        /// reference, which holds for the link's whole session because the socket raises the establishment on the very object
+        /// <see cref="SynapseManager.Connect"/> returned.
+        /// </remarks>
         private void OnRelayConnectionEstablished(ConnectionEventArgs connectionEventArgs)
         {
+            SynapseConnection establishedConnection = connectionEventArgs.Connection;
+
+            if (!ReferenceEquals(establishedConnection, _relayConnection))
+            {
+                // Sent away rather than ignored, so it is not left holding a session this link will never read.
+                _synapseManager?.Disconnect(establishedConnection);
+
+                return;
+            }
+
             if (_isHandshakeSent)
                 return;
 
             _isHandshakeSent = true;
-            _relayConnection = connectionEventArgs.Connection;
 
             TrySend(MessageCodec.WriteAuthenticate(_sendBuffer, _connectionKey), Channel.Reliable);
 
@@ -369,12 +410,27 @@ namespace Nucleus.Integrations.BlitzRelay
             if (!ReferenceEquals(connectionEventArgs.Connection, _relayConnection))
                 return;
 
-            /* Dropped so a send after the close finds no link and reports failure quietly. A closed connection is dead for good,
-             * and the socket rejects a send on one. */
+            /* Dropped so a send after the close finds no link and reports failure quietly. A closed connection's session is over,
+             * the socket rejects a send on one until it releases it, and after that the object may carry another session. */
             _relayConnection = null;
             IsReady = false;
 
             Closed?.Invoke();
+        }
+
+        /// <summary>
+        /// Drops the link's connection if it is still held when the socket releases it.
+        /// </summary>
+        /// <param name="connectionEventArgs">The released connection.</param>
+        /// <remarks>
+        /// The close has already dropped it on every ordinary path, so this is normally a no-op. It is what guarantees the drop:
+        /// once released, the socket may hand the same object to another connection on this thread, and a send or disconnect
+        /// through a reference kept past this point would act on that one. Handled exactly as the close, which compares by
+        /// reference and reports the link gone.
+        /// </remarks>
+        private void OnRelayConnectionReleased(ConnectionEventArgs connectionEventArgs)
+        {
+            OnRelayConnectionClosed(connectionEventArgs);
         }
 
         /// <summary>
@@ -383,6 +439,10 @@ namespace Nucleus.Integrations.BlitzRelay
         /// <param name="packetReceivedEventArgs">The message as it arrived.</param>
         private void OnRelayPacketReceived(PacketReceivedEventArgs packetReceivedEventArgs)
         {
+            // Only the link's own connection speaks for the relay. A message on any other is a stranger's and is not read.
+            if (!ReferenceEquals(packetReceivedEventArgs.Connection, _relayConnection))
+                return;
+
             ArraySegment<byte> payload = packetReceivedEventArgs.Payload;
 
             if (payload.Count == 0 || !MessageCodec.TryReadMessageType(payload, out MessageType messageType))
