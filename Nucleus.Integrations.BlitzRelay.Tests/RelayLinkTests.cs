@@ -101,7 +101,7 @@ public class RelayLinkTests
             /* Only the close is waited on. The link sends the new session away, since it did not open it, so the newcomer's
              * connection may already be released, and so no longer the newcomer's to read, by the time the close is seen. */
             newcomer = CreateStartedRelay(relayPort);
-            newcomer.Connect(new(IPAddress.Loopback, linkEndPoint.Port));
+            newcomer.Connect(new IPEndPoint(IPAddress.Loopback, linkEndPoint.Port));
             Assert.True(PumpUntil(() => isClosed, WaitTimeout, relayLink, newcomer), "The reconnect never replaced the link's session.");
 
             AssertSendReachesNothing(relayLink, newcomer);
@@ -255,7 +255,7 @@ public class RelayLinkTests
         int receivedCount = 0;
         relay.PacketReceived += _ => receivedCount++;
 
-        Assert.True(relayLink.TryConnect(new(IPAddress.Loopback, relay.BoundEndPoints[0].Port), maximumTransmissionUnit: 1200));
+        Assert.True(relayLink.TryConnect(new IPEndPoint(IPAddress.Loopback, relay.BoundEndPoints[0].Port), maximumTransmissionUnit: 1200));
         Assert.True(PumpUntil(() => receivedCount > 0, WaitTimeout, relayLink, relay), "The link never reached the relay.");
     }
 
